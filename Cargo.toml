@@ -17,6 +17,18 @@ rusb = "0.9"
 # Only used by the `enumerate` helper to list HID devices.
 hidapi = "2"
 
+# Used by the `play` binary to synthesize keyboard/mouse events and to exit
+# cleanly (releasing any held keys) on Ctrl-C.
+core-graphics = "0.24"
+ctrlc = "3"
+
+# Profile save/load and the egui-based mapper UI (`mapper-ui` binary).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "5"
+eframe = "0.29"
+rfd = "0.15"
+
 [[bin]]
 name = "enumerate"
 path = "src/bin/enumerate.rs"
@@ -28,3 +40,11 @@ path = "src/bin/usbprobe.rs"
 [[bin]]
 name = "powera"
 path = "src/main.rs"
+
+[[bin]]
+name = "play"
+path = "src/bin/play.rs"
+
+[[bin]]
+name = "mapper-ui"
+path = "src/bin/mapper_ui.rs"

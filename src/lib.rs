@@ -166,6 +166,92 @@ impl GamepadState {
     }
 }
 
+pub mod mapping;
+
+/// Opening and reading the controller's XInput interface over USB (libusb).
+///
+/// Works for any PowerA device exposing the XInput interface — the wired pad
+/// or the 2.4GHz adapter. Used by the `powera` and `play` binaries.
+pub mod controller {
+    use super::{parse_report, GamepadState};
+    use rusb::{Context, Direction, TransferType, UsbContext};
+    use std::time::Duration;
+
+    const POWERA_VID: u16 = 0x20D6;
+
+    /// An opened, claimed XInput controller ready to read input reports from.
+    pub struct Controller {
+        handle: rusb::DeviceHandle<Context>,
+        ep_in: u8,
+        buf: [u8; 32],
+    }
+
+    impl Controller {
+        /// Find the first PowerA device exposing an XInput interface, open and
+        /// claim it. Returns a descriptive error if none is connected.
+        pub fn open() -> Result<Controller, String> {
+            let ctx = Context::new().map_err(|e| e.to_string())?;
+            for device in ctx.devices().map_err(|e| e.to_string())?.iter() {
+                let is_powera = device
+                    .device_descriptor()
+                    .map(|d| d.vendor_id() == POWERA_VID)
+                    .unwrap_or(false);
+                if !is_powera {
+                    continue;
+                }
+                if let Some((iface, ep_in)) = find_xinput(&device).map_err(|e| e.to_string())? {
+                    let handle = device.open().map_err(|e| e.to_string())?;
+                    let _ = handle.set_auto_detach_kernel_driver(true);
+                    handle
+                        .claim_interface(iface)
+                        .map_err(|e| format!("claim interface {iface}: {e}"))?;
+                    return Ok(Controller { handle, ep_in, buf: [0u8; 32] });
+                }
+            }
+            Err("No PowerA XInput device found. Plug in the 2.4GHz dongle (switch on \
+                 2.4 RF) or the wired pad and power the controller on."
+                .into())
+        }
+
+        /// Read one input report. `Ok(None)` means the read timed out with no
+        /// new data; `Ok(Some(_))` is decoded state; `Err` is a fatal error.
+        pub fn read(&mut self, timeout_ms: u64) -> Result<Option<GamepadState>, String> {
+            match self
+                .handle
+                .read_interrupt(self.ep_in, &mut self.buf, Duration::from_millis(timeout_ms))
+            {
+                Ok(n) => Ok(parse_report(&self.buf[..n])),
+                Err(rusb::Error::Timeout) => Ok(None),
+                Err(rusb::Error::NoDevice) => Err("controller disconnected".into()),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+    }
+
+    fn find_xinput<T: UsbContext>(
+        device: &rusb::Device<T>,
+    ) -> Result<Option<(u8, u8)>, rusb::Error> {
+        let cfg = device.active_config_descriptor()?;
+        for iface in cfg.interfaces() {
+            for alt in iface.descriptors() {
+                if alt.class_code() == 0xFF
+                    && alt.sub_class_code() == 0x5D
+                    && alt.protocol_code() == 0x01
+                {
+                    for ep in alt.endpoint_descriptors() {
+                        if ep.direction() == Direction::In
+                            && ep.transfer_type() == TransferType::Interrupt
+                        {
+                            return Ok(Some((alt.interface_number(), ep.address())));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

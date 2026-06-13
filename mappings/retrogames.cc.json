@@ -1,0 +1,26 @@
+{
+  "name": "retrogames.cc",
+  "deadzone": 0.08,
+  "walk_threshold": 0.5,
+  "trigger_threshold": 64,
+  "bindings": {
+    "A": "Z",
+    "B": "X",
+    "X": "A",
+    "Y": "S",
+    "LB": "Q",
+    "RB": "E",
+    "LT": "R",
+    "RT": "T",
+    "START": "Enter",
+    "BACK": "Right Shift",
+    "DPAD_UP": "Up",
+    "DPAD_DOWN": "Down",
+    "DPAD_LEFT": "Left",
+    "DPAD_RIGHT": "Right",
+    "L_STICK_UP": "Up",
+    "L_STICK_DOWN": "Down",
+    "L_STICK_LEFT": "Left",
+    "L_STICK_RIGHT": "Right"
+  }
+}
