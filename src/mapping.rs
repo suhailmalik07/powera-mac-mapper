@@ -278,10 +278,21 @@ impl Profile {
     }
 }
 
-/// Directory where profiles are stored: a `mappings/` folder in the working
-/// directory (so they live with the project and can be committed/shared).
+/// Directory where profiles are stored.
+///
+/// In development (running from the repo) this is the project's `mappings/`
+/// folder, so profiles live with the project and can be committed/shared. When
+/// that folder isn't present — e.g. a packaged `.app` launched from Finder with
+/// cwd `/` — it falls back to `~/Library/Application Support/powerA-Driver/mappings`.
 pub fn profiles_dir() -> PathBuf {
-    PathBuf::from("mappings")
+    let repo = PathBuf::from("mappings");
+    if repo.is_dir() {
+        return repo;
+    }
+    dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("powerA-Driver")
+        .join("mappings")
 }
 
 /// Create the `mappings/` folder and seed the bundled profiles if missing.

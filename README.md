@@ -24,14 +24,35 @@ mappings.
 ## Requirements
 
 - macOS (built/tested on Apple Silicon, macOS 26)
-- Rust (stable)
+- **Rust** (stable) — install from <https://rustup.rs>
 - The PowerA controller **+ its 2.4 GHz dongle**
 
-## Setup
+## Install & run (personal / dev use)
+
+There are **no prebuilt binaries** — you run it from source with Rust. (A
+distributable, signed/notarized `.app` would require a paid Apple Developer
+account, which this project intentionally doesn't use.)
+
+```bash
+# 1. install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# 2. get the code
+git clone <this-repo-url> && cd powerA-Driver
+
+# 3. plug in the hardware (see below), then run the GUI mapper
+cargo run --bin mapper-ui
+```
+
+Hardware setup:
 
 1. Set the controller's **back switch to `2.4 RF`**.
 2. Plug the **2.4 GHz dongle** into the Mac.
 3. Power the controller on (LED steady).
+
+> `cargo run` builds in debug; add `--release` for an optimized build
+> (`cargo run --release --bin mapper-ui`). The binary lives at
+> `target/release/mapper-ui` if you want to launch it directly.
 
 ## Binaries
 
