@@ -1,0 +1,30 @@
+[package]
+name = "powera-driver"
+version = "0.1.0"
+edition = "2021"
+description = "Userspace macOS driver / input reader for PowerA controllers (Xbox 360 / XInput protocol)"
+
+[lib]
+name = "powera_driver"
+path = "src/lib.rs"
+
+[dependencies]
+# Raw USB access. The controller speaks the Xbox 360 XInput protocol over a
+# vendor-specific interface (class 0xff/0x5d/0x01), so we talk to its interrupt
+# endpoints directly rather than going through macOS's HID stack.
+rusb = "0.9"
+
+# Only used by the `enumerate` helper to list HID devices.
+hidapi = "2"
+
+[[bin]]
+name = "enumerate"
+path = "src/bin/enumerate.rs"
+
+[[bin]]
+name = "usbprobe"
+path = "src/bin/usbprobe.rs"
+
+[[bin]]
+name = "powera"
+path = "src/main.rs"
