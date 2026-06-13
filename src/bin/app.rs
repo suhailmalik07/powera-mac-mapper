@@ -15,7 +15,7 @@ use powera_driver::mapping::{
     self, active_keys, key_name, ControlId, Injector, Profile, KEYS,
 };
 use powera_driver::GamepadState;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -32,6 +32,48 @@ struct Shared {
     status: Mutex<String>,
     running: AtomicBool,
     alive: AtomicBool,
+    /// Whether the window is focused — the worker only wakes the UI when it is.
+    ui_focused: AtomicBool,
+    /// Deadzone (f32 bits) so the worker can compute the display signature
+    /// without locking the profile.
+    deadzone_bits: AtomicU32,
+}
+
+/// A quantized snapshot of everything the UI actually displays. The worker
+/// repaints only when this changes, so an idle controller costs ~0 CPU.
+#[derive(PartialEq)]
+struct DisplaySig {
+    sticks: [i8; 4],
+    triggers: [u8; 2],
+    buttons: u16,
+}
+
+impl DisplaySig {
+    fn of(s: &GamepadState, deadzone: f32) -> DisplaySig {
+        let q = |v: f32| (v * 100.0).round().clamp(-127.0, 127.0) as i8;
+        let (lx, ly) = s.left_stick_norm(deadzone);
+        let (rx, ry) = s.right_stick_norm(deadzone);
+        let buttons = (s.a as u16)
+            | (s.b as u16) << 1
+            | (s.x as u16) << 2
+            | (s.y as u16) << 3
+            | (s.lb as u16) << 4
+            | (s.rb as u16) << 5
+            | (s.l3 as u16) << 6
+            | (s.r3 as u16) << 7
+            | (s.start as u16) << 8
+            | (s.back as u16) << 9
+            | (s.guide as u16) << 10
+            | (s.dpad_up as u16) << 11
+            | (s.dpad_down as u16) << 12
+            | (s.dpad_left as u16) << 13
+            | (s.dpad_right as u16) << 14;
+        DisplaySig {
+            sticks: [q(lx), q(ly), q(rx), q(ry)],
+            triggers: [s.left_trigger, s.right_trigger],
+            buttons,
+        }
+    }
 }
 
 fn main() -> eframe::Result<()> {
@@ -44,7 +86,7 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "PowerA Mapper",
         options,
-        Box::new(|_cc| Ok(Box::new(MapperApp::new()))),
+        Box::new(|cc| Ok(Box::new(MapperApp::new(cc)))),
     )
 }
 
@@ -58,7 +100,7 @@ struct MapperApp {
 }
 
 impl MapperApp {
-    fn new() -> Self {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // Make sure mappings/ exists with the bundled profiles, then start on
         // retrogames.cc if present (the layout in use), else the default.
         mapping::ensure_defaults();
@@ -70,8 +112,10 @@ impl MapperApp {
             status: Mutex::new("starting…".to_string()),
             running: AtomicBool::new(false),
             alive: AtomicBool::new(true),
+            ui_focused: AtomicBool::new(true),
+            deadzone_bits: AtomicU32::new(profile.deadzone.to_bits()),
         });
-        spawn_worker(shared.clone());
+        spawn_worker(shared.clone(), cc.egui_ctx.clone());
         MapperApp {
             save_name: profile.name.clone(),
             profile,
@@ -84,12 +128,13 @@ impl MapperApp {
 }
 
 /// The controller/injection thread: owns the device and the event source.
-fn spawn_worker(shared: Arc<Shared>) {
+fn spawn_worker(shared: Arc<Shared>, ctx: egui::Context) {
     thread::spawn(move || {
         let source = match CGEventSource::new(CGEventSourceStateID::HIDSystemState) {
             Ok(s) => s,
             Err(_) => {
                 *shared.status.lock().unwrap() = "failed to create event source".into();
+                ctx.request_repaint();
                 return;
             }
         };
@@ -98,6 +143,8 @@ fn spawn_worker(shared: Arc<Shared>) {
         // Remember the last (state, running) we acted on so we can skip the
         // (re)compute when the controller is sending identical reports.
         let mut last: Option<(GamepadState, bool)> = None;
+        // Last display signature we woke the UI for.
+        let mut last_sig: Option<DisplaySig> = None;
 
         while shared.alive.load(Ordering::SeqCst) {
             // (Re)open the controller if needed.
@@ -106,9 +153,11 @@ fn spawn_worker(shared: Arc<Shared>) {
                     Ok(c) => {
                         controller = Some(c);
                         *shared.status.lock().unwrap() = "controller connected".into();
+                        ctx.request_repaint(); // status changed
                     }
                     Err(e) => {
                         *shared.status.lock().unwrap() = e;
+                        ctx.request_repaint();
                         thread::sleep(Duration::from_millis(500));
                         continue;
                     }
@@ -121,6 +170,7 @@ fn spawn_worker(shared: Arc<Shared>) {
                 Ok(None) => {}
                 Err(e) => {
                     *shared.status.lock().unwrap() = format!("read error: {e}");
+                    ctx.request_repaint();
                     inj.release_all();
                     controller = None;
                     continue;
@@ -143,9 +193,22 @@ fn spawn_worker(shared: Arc<Shared>) {
                 last = Some((state, running));
             }
 
+            // Wake the UI only when what it displays actually changes, and only
+            // while it's focused. A connected-but-idle controller therefore
+            // triggers no repaints, and a backgrounded window (you're in the
+            // game) never repaints — injection above is unaffected either way.
+            if shared.ui_focused.load(Ordering::Relaxed) {
+                let dz = f32::from_bits(shared.deadzone_bits.load(Ordering::Relaxed));
+                let sig = DisplaySig::of(&state, dz);
+                if last_sig.as_ref() != Some(&sig) {
+                    last_sig = Some(sig);
+                    // Coalesced by egui to ~30 fps; stops once movement stops.
+                    ctx.request_repaint_after(Duration::from_millis(33));
+                }
+            }
+
             // When we're not injecting there's no need to drain the endpoint at
-            // its full ~kHz rate; ease off to keep idle CPU low. Live input still
-            // updates fast enough for the UI's indicators.
+            // its full ~kHz rate; ease off to keep idle CPU low.
             if !running {
                 thread::sleep(Duration::from_millis(8));
             }
@@ -344,16 +407,19 @@ impl eframe::App for MapperApp {
             });
         });
 
-        // Mirror the working profile to the worker thread.
+        // Mirror the working profile to the worker thread, and publish focus +
+        // deadzone so it knows whether/when to wake us.
         *self.shared.profile.lock().unwrap() = self.profile.clone();
-
-        // Repaint smoothly only while focused (so live dots feel responsive when
-        // binding). In the background — i.e. while you're playing the game — the
-        // window barely repaints; key injection happens in the worker thread and
-        // doesn't depend on rendering, so input is unaffected.
         let focused = ctx.input(|i| i.focused);
-        let interval = if focused { 33 } else { 500 };
-        ctx.request_repaint_after(Duration::from_millis(interval));
+        self.shared.ui_focused.store(focused, Ordering::Relaxed);
+        self.shared
+            .deadzone_bits
+            .store(self.profile.deadzone.to_bits(), Ordering::Relaxed);
+
+        // No fixed-rate animation: the worker calls request_repaint() when the
+        // displayed state changes. This is just a slow safety tick so status /
+        // connection changes still surface if a repaint request is ever missed.
+        ctx.request_repaint_after(Duration::from_millis(if focused { 1000 } else { 3000 }));
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
