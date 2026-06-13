@@ -3,7 +3,7 @@
 //! Create controller→keyboard mappings visually, watch live input, save/load
 //! named profiles, and start/stop injection — all from one window.
 //!
-//!     cargo run --bin mapper-ui
+//!     cargo run --bin app
 //!
 //! Needs Accessibility permission (System Settings > Privacy & Security >
 //! Accessibility) for the app to actually send keys while "Running".
@@ -95,6 +95,9 @@ fn spawn_worker(shared: Arc<Shared>) {
         };
         let mut inj = Injector::new(source);
         let mut controller: Option<Controller> = None;
+        // Remember the last (state, running) we acted on so we can skip the
+        // (re)compute when the controller is sending identical reports.
+        let mut last: Option<(GamepadState, bool)> = None;
 
         while shared.alive.load(Ordering::SeqCst) {
             // (Re)open the controller if needed.
@@ -125,11 +128,26 @@ fn spawn_worker(shared: Arc<Shared>) {
             }
 
             let state = *shared.live.lock().unwrap();
-            if shared.running.load(Ordering::SeqCst) {
-                let prof = shared.profile.lock().unwrap().clone();
-                inj.apply(active_keys(&prof, &state));
-            } else {
-                inj.release_all();
+            let running = shared.running.load(Ordering::SeqCst);
+
+            // Only touch the injector when the state or running flag changed —
+            // the controller streams identical reports at rest, and reprocessing
+            // each one is what burned idle CPU.
+            if last != Some((state, running)) {
+                if running {
+                    let prof = shared.profile.lock().unwrap().clone();
+                    inj.apply(active_keys(&prof, &state));
+                } else {
+                    inj.release_all();
+                }
+                last = Some((state, running));
+            }
+
+            // When we're not injecting there's no need to drain the endpoint at
+            // its full ~kHz rate; ease off to keep idle CPU low. Live input still
+            // updates fast enough for the UI's indicators.
+            if !running {
+                thread::sleep(Duration::from_millis(8));
             }
         }
         inj.release_all();
@@ -326,9 +344,16 @@ impl eframe::App for MapperApp {
             });
         });
 
-        // Mirror the working profile to the worker thread, and keep animating.
+        // Mirror the working profile to the worker thread.
         *self.shared.profile.lock().unwrap() = self.profile.clone();
-        ctx.request_repaint_after(Duration::from_millis(16));
+
+        // Repaint smoothly only while focused (so live dots feel responsive when
+        // binding). In the background — i.e. while you're playing the game — the
+        // window barely repaints; key injection happens in the worker thread and
+        // doesn't depend on rendering, so input is unaffected.
+        let focused = ctx.input(|i| i.focused);
+        let interval = if focused { 33 } else { 500 };
+        ctx.request_repaint_after(Duration::from_millis(interval));
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

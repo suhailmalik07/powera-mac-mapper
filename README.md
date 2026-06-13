@@ -1,4 +1,4 @@
-# powerA-Driver
+# powerA-controller-macos-mapper
 
 A userspace macOS driver / input mapper for the **PowerA Battle Dragon Advanced
 Wireless Controller for PC & Cloud Gaming** (`20D6:4024`), written in Rust.
@@ -38,10 +38,10 @@ account, which this project intentionally doesn't use.)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # 2. get the code
-git clone <this-repo-url> && cd powerA-Driver
+git clone https://github.com/suhailmalik07/powerA-controller-macos-mapper.git && cd powerA-controller-macos-mapper
 
 # 3. plug in the hardware (see below), then run the GUI mapper
-cargo run --bin mapper-ui
+make app          # = cargo run --release --bin app
 ```
 
 Hardware setup:
@@ -51,8 +51,8 @@ Hardware setup:
 3. Power the controller on (LED steady).
 
 > `cargo run` builds in debug; add `--release` for an optimized build
-> (`cargo run --release --bin mapper-ui`). The binary lives at
-> `target/release/mapper-ui` if you want to launch it directly.
+> (`cargo run --release --bin app`). The binary lives at
+> `target/release/app` if you want to launch it directly.
 
 ## Binaries
 
@@ -70,13 +70,13 @@ cargo run --bin powera
 cargo run --bin play
 
 # Native GUI mapper — build/save/share mappings, live input, start/stop
-cargo run --bin mapper-ui
+cargo run --bin app
 ```
 
 > Only **one** process can claim the controller at a time. Quit `powera`/`play`
-> before launching `mapper-ui`, and vice-versa.
+> before launching `app`, and vice-versa.
 
-## The mapper UI (`mapper-ui`)
+## The mapper UI (`app`)
 
 - **Live input** — each control's dot lights up when pressed.
 - **Bind** a key to each control via the dropdowns.
