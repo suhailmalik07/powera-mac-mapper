@@ -8,6 +8,8 @@ remap them to keyboard input so you can play games (e.g. arcade emulators like
 retrogames.cc) — including a native macOS GUI for building, saving, and sharing
 mappings.
 
+![PowerA Mapper UI](docs/mapper-ui.png)
+
 > ⚠️ **Works in 2.4 GHz mode only.** Set the controller's back switch to
 > **`2.4 RF`** and plug the bundled **2.4 GHz USB dongle** into the Mac. The
 > wired USB cable and Bluetooth **do not work** for input on macOS (see
